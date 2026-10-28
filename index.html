@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<title>Car Slalom 2 — v5</title>
+<style>
+:root{color-scheme:dark;--chalk:#f7f7f4;--road:#9c9999;--green:#3f791c}
+*{box-sizing:border-box}html,body{height:100%;margin:0;overflow:hidden;background:#262625;font-family:'Trebuchet MS',system-ui,sans-serif;touch-action:none}#shell{height:100dvh;width:100vw;display:flex;justify-content:center;align-items:center}#game{height:100%;width:100%;max-width:540px;position:relative;background:var(--road);overflow:hidden;box-shadow:0 0 65px #0005}canvas{display:block;width:100%;height:100%}.hud{position:absolute;top:max(13px,env(safe-area-inset-top));left:15px;right:15px;display:flex;justify-content:space-between;align-items:center;color:#fff;font-size:19px;font-style:italic;font-weight:900;text-shadow:1px 2px 1px #666;pointer-events:none}.hud button{pointer-events:auto;appearance:none;background:#0003;border:1px solid #ffffff88;color:white;border-radius:10px;padding:7px 12px;font-size:20px}.hidden{display:none!important}.panel{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;color:#fff;text-align:center;padding:24px;background:#969393}.title{font-size:clamp(36px,9vw,54px);font-weight:900;font-style:italic;letter-spacing:-2px;transform:rotate(-5deg);text-shadow:2px 3px #292929;margin:0 0 8px}.sub{font-size:14px;letter-spacing:3px;opacity:.9;margin-bottom:28px}.cars{display:flex;gap:16px;width:min(100%,380px);justify-content:center}.car-choice{background:#ffffff0b;border:3px solid #ffffff66;border-radius:14px;color:#fff;flex:1;max-width:174px;padding:13px 7px 11px;display:flex;align-items:center;flex-direction:column;gap:5px;font-size:14px;font-weight:700}.car-choice.selected{border-color:white;background:#fff3;box-shadow:0 0 0 2px #0002}.car-choice canvas{height:92px;width:70px}.car-choice small{font-size:11px;font-weight:400;opacity:.9}.action{margin-top:27px;padding:13px 50px;border:3px solid white;background:transparent;color:white;font-size:24px;font-style:italic;font-weight:800;border-radius:4px;transform:rotate(-1deg)}.action:active,.car-choice:active{transform:scale(.96)}.hint{font-size:12px;opacity:.8;margin-top:23px;max-width:270px;line-height:1.5}.controls{position:absolute;bottom:max(12px,env(safe-area-inset-bottom));left:0;right:0;display:flex;justify-content:space-between;gap:16px;padding:0 23px;pointer-events:none}.steer{pointer-events:auto;touch-action:none;user-select:none;background:#6caa6c69;border:2px solid #cbebcb26;width:35%;height:110px;max-width:165px;border-radius:15px;color:#b2dfac;font-size:80px;line-height:1;display:flex;align-items:center;justify-content:center;opacity:.84}.steer:active,.steer.held{background:#6db36f99;opacity:1}.overlay{position:absolute;inset:0;background:#858282d9;color:white;display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;padding:20px}.overlay h2{font-size:65px;font-style:italic;margin:0;transform:rotate(-5deg);text-shadow:2px 3px #666}.overlay p{font-size:22px;font-weight:800}.overlay button{border:3px solid white;background:transparent;color:white;font-size:21px;padding:12px 24px;margin:8px;border-radius:4px}.topline{position:absolute;top:0;left:0;right:0;height:7px;background:repeating-linear-gradient(110deg,#c81313 0 55px,#fff 55px 105px)}
+</style>
+</head>
+<body><div id="shell"><div id="game"><canvas id="scene"></canvas>
+<div id="hud" class="hud hidden"><span id="score">SCORE: 0</span><button id="pause" aria-label="Pause">Ⅱ</button></div>
+<section id="menu" class="panel"><div class="topline"></div><h1 class="title">- Car Slalom 2 -</h1><div class="sub">ENDLESS ROAD</div><div class="cars"><button class="car-choice selected" data-car="formula"><canvas width="80" height="110" id="previewF"></canvas>FORMULA</button><button class="car-choice" data-car="rally"><canvas width="80" height="110" id="previewR"></canvas>RALLY</button></div><button id="start" class="action">START →</button><div class="hint">Use ◀ ▶ to steer.<br>Avoid obstacles. Score one point for each passed.</div></section>
+<div id="controls" class="controls hidden"><button id="left" class="steer" aria-label="Steer left">◀</button><button id="right" class="steer" aria-label="Steer right">▶</button></div>
+<div id="overlay" class="overlay hidden"><h2 id="endTitle">CRASH!</h2><p id="endText">SCORE: 0</p><button id="retry">RETRY ↻</button><button id="back">MAIN MENU</button></div>
+</div></div>
+<script>
+(()=>{'use strict';
+const game=document.getElementById('game'),c=document.getElementById('scene'),ctx=c.getContext('2d');
+const $=id=>document.getElementById(id);let W=0,H=0,dpr=1;let mode='menu',carType='formula',score=0,runTime=0,scroll=0,spawnDist=0,last=0,obstacles=[],bushes=[],player,keys={left:false,right:false},pauseStart=0,holdTimer=0,lastSide=null,sameSideCount=0;
+const rnd=(a,b)=>a+Math.random()*(b-a),clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+function resize(){const r=game.getBoundingClientRect();W=r.width;H=r.height;dpr=Math.min(devicePixelRatio||1,2);c.width=Math.round(W*dpr);c.height=Math.round(H*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);if(player)player.x=clamp(player.x,player.w/2+5,W-player.w/2-5)}
+window.addEventListener('resize',resize);resize();
+function paintCar(g,x,y,w,h,type,angle=0){g.save();g.translate(x,y);g.rotate(angle);g.fillStyle='#111';if(type==='formula'){
+ g.fillRect(-w*.53,-h*.36,w*.22,h*.25);g.fillRect(w*.31,-h*.36,w*.22,h*.25);g.fillRect(-w*.57,h*.25,w*.23,h*.25);g.fillRect(w*.34,h*.25,w*.23,h*.25);
+ g.fillStyle='#ed1110';g.fillRect(-w*.45,-h*.52,w*.9,h*.12);g.fillRect(-w*.32,-h*.4,w*.64,h*.74);g.fillRect(-w*.49,h*.4,w*.98,h*.1);g.fillStyle='#a80000';g.fillRect(-w*.23,-h*.11,w*.46,h*.22);g.fillStyle='#232323';g.beginPath();g.ellipse(0,-h*.05,w*.2,h*.17,0,0,7);g.fill();g.fillStyle='#f84a39';g.fillRect(-w*.26,h*.25,w*.52,h*.11);
+ }else{
+ g.fillStyle='#131313';g.fillRect(-w*.5,-h*.39,w*.19,h*.25);g.fillRect(w*.31,-h*.39,w*.19,h*.25);g.fillRect(-w*.5,h*.17,w*.19,h*.25);g.fillRect(w*.31,h*.17,w*.19,h*.25);
+ g.fillStyle='#067ed4';g.beginPath();g.roundRect(-w*.4,-h*.48,w*.8,h*.96,w*.19);g.fill();g.strokeStyle='#111';g.lineWidth=1.6;g.stroke();g.fillStyle='#003e64';g.beginPath();g.roundRect(-w*.3,-h*.25,w*.6,h*.2,3);g.fill();g.beginPath();g.roundRect(-w*.3,h*.12,w*.6,h*.21,3);g.fill();g.fillStyle='#2ba6f2';g.fillRect(-w*.3,-h*.4,w*.6,h*.08);
+ }g.restore()}
+function preview(id,type){let pc=$(id),p=pc.getContext('2d');p.clearRect(0,0,80,110);paintCar(p,40,55,51,83,type,0)}preview('previewF','formula');preview('previewR','rally');
+function newPlayer(){let w=carType==='formula'?38:36;player={x:W/2,y:H*.72,w,h:carType==='formula'?65:61,vx:0,angle:0,yawRate:0,steer:0,slip:0}}
+function begin(){mode='playing';score=0;runTime=0;scroll=0;spawnDist=0;lastSide=null;sameSideCount=0;obstacles=[];bushes=[];keys.left=keys.right=false;newPlayer();$('menu').classList.add('hidden');$('overlay').classList.add('hidden');$('hud').classList.remove('hidden');$('controls').classList.remove('hidden');$('pause').textContent='Ⅱ';$('score').textContent='SCORE: 0'; // First gap leaves reaction time
+ spawnDist=H*.58;last=performance.now();}
+function spawn(){const width=W*rnd(.30,.65);const side=sameSideCount>=2?(lastSide==='left'?'right':'left'):(Math.random()<.5?'left':'right');sameSideCount=side===lastSide?sameSideCount+1:1;lastSide=side;let height=clamp(H*.075,38,74);obstacles.push({y:-height-10,w:width,h:height,side,passed:false,kind:Math.random()<.24?'hedge':'barrier'});}
+function end(){mode='dead';keys.left=keys.right=false;$('controls').classList.add('hidden');$('overlay').classList.remove('hidden');$('endTitle').textContent='CRASH!';$('endText').textContent='SCORE: '+score;}
+function showMenu(){mode='menu';$('overlay').classList.add('hidden');$('hud').classList.add('hidden');$('controls').classList.add('hidden');$('menu').classList.remove('hidden');}
+function togglePause(){if(mode==='playing'){mode='paused';keys.left=keys.right=false;$('pause').textContent='▶';$('overlay').classList.remove('hidden');$('endTitle').textContent='PAUSED';$('endText').textContent='SCORE: '+score;$('retry').textContent='RESUME ▶';}else if(mode==='paused'){mode='playing';$('overlay').classList.add('hidden');$('pause').textContent='Ⅱ';$('retry').textContent='RETRY ↻';last=performance.now();}}
+// Collision uses a car-aligned inner rectangle, inset 25% from every edge.
+// A separating-axis test avoids false hits from the rotated outer bounding box.
+function carHitsObstacle(p,o,ox){
+ const hx=p.w*.25, hy=p.h*.25;
+ const ca=Math.cos(p.angle),sa=Math.sin(p.angle);
+ const dx=(ox+o.w*.5)-p.x, dy=(o.y+o.h*.5)-p.y;
+ const ow=o.w*.5, oh=o.h*.5;
+ // World horizontal and vertical axes.
+ if(Math.abs(dx)>=ow+Math.abs(ca)*hx+Math.abs(sa)*hy)return false;
+ if(Math.abs(dy)>=oh+Math.abs(sa)*hx+Math.abs(ca)*hy)return false;
+ // Car's local horizontal and vertical axes.
+ if(Math.abs(dx*ca+dy*sa)>=hx+ow*Math.abs(ca)+oh*Math.abs(sa))return false;
+ if(Math.abs(-dx*sa+dy*ca)>=hy+ow*Math.abs(sa)+oh*Math.abs(ca))return false;
+ return true;
+}
+function update(dt){
+ runTime+=dt;
+ // The car always has a forward-facing engine speed. Turning transforms this
+ // into horizontal travel and reduces the vertical rate of the road.
+ const speed=Math.min(1100,300+runTime*9.5);
+ const input=(keys.right?1:0)-(keys.left?1:0);
+ const rally=carType==='rally';
+ // Front-wheel steering: both cars have quick turn-in. The steering input
+ // controls front wheel angle; yaw is generated by travelling forwards.
+ const steerResponse=16.5;
+ player.steer+=(input-player.steer)*(1-Math.exp(-steerResponse*dt));
+ // Bicycle-model inspired yaw: steering acts at the front axle, not as a
+ // sideways push at the rear. Slightly higher Formula steering authority.
+ const speedScale=Math.pow(speed/300,.22);
+ const maxYaw=3.38*speedScale;
+ const desiredYaw=player.steer*maxYaw;
+ // Both cars rotate at the same rate; rally handling differs in lateral grip.
+ const yawGrip=18.0;
+ player.yawRate+=(desiredYaw-player.yawRate)*(1-Math.exp(-yawGrip*dt));
+ player.angle+=player.yawRate*dt;
+ // No automatic steering correction: releasing both buttons keeps the
+ // current heading. Only angular velocity decays, representing tire damping.
+ // Rally maintains sideways momentum, requiring manual countersteering.
+ if(input===0){
+   player.yawRate*=Math.exp(-9.0*dt);
+ }
+ player.angle=clamp(player.angle,-1.32,1.32);
+ // Lateral movement lags the direction the front wheels are pointing.
+ // Rally rear tires have less lateral grip: it slides past the intended
+ // trajectory and benefits from deliberate countersteering.
+ const desiredLateral=speed*Math.sin(player.angle);
+ const lateralGrip=rally?3.0:13.0;
+ player.vx+=(desiredLateral-player.vx)*(1-Math.exp(-lateralGrip*dt));
+ player.x+=player.vx*dt;
+ // Only crash at the roadside once the entire rotated car has gone off-screen.
+ const edgeHalfX=(Math.abs(Math.cos(player.angle))*player.w+Math.abs(Math.sin(player.angle))*player.h)*.5;
+ if(player.x+edgeHalfX<=0 || player.x-edgeHalfX>=W){end();return}
+ // Vertical progression is the forward component, not full vehicle speed.
+ // Formula loses forward progress while turning; Rally loses at most 10%.
+ // Formula loses forward progress when pointed sideways. Rally maintains
+ // almost all approach speed while drifting (arcade rally handling).
+ const angleForward=Math.max(0,Math.cos(player.angle));
+ const forwardSpeed=rally?speed*(.90+.10*angleForward):speed*angleForward;
+ scroll=(scroll+forwardSpeed*dt)%105;
+ spawnDist-=forwardSpeed*dt;
+ if(spawnDist<=0){
+  // Generate another obstacle soon, but allow extra time whenever the safe
+  // opening switches sides, so that the slalom remains physically passable.
+  const previousSide=lastSide;
+  spawn();
+  const switched=previousSide!==null&&previousSide!==lastSide;
+  const timeGap=switched?rnd(1.02,1.19):rnd(.76,.94);
+  const minimumTravel=Math.max(player.h*2.9,W*.76);
+  spawnDist=Math.max(minimumTravel,speed*timeGap);
+ }
+ for(let i=obstacles.length-1;i>=0;i--){
+  const o=obstacles[i];o.y+=forwardSpeed*dt;
+  const ox=o.side==='left'?0:W-o.w;
+  // Contact at the front, rear and corners is safe until the obstacle
+  // reaches the inset inner collision body (25% margin on each edge).
+  if(carHitsObstacle(player,o,ox)){end();return}
+  const innerHalfY=(Math.abs(Math.cos(player.angle))*player.h+Math.abs(Math.sin(player.angle))*player.w)*.25;
+  if(!o.passed&&o.y>player.y+innerHalfY){o.passed=true;score++;$('score').textContent='SCORE: '+score}
+  if(o.y>H+100)obstacles.splice(i,1);
+ }
+}
+function bg(){ctx.fillStyle='#9b9898';ctx.fillRect(0,0,W,H);ctx.fillStyle='#f7f7f4';let dashH=clamp(H*.067,35,58);for(let y=scroll-105;y<H;y+=105){ctx.fillRect(W*.485,y,W*.035,dashH)} }
+function hedge(x,y,w,h){ctx.fillStyle='#417c25';ctx.fillRect(x,y,w,h);ctx.fillStyle='#376b1d';for(let i=0;i<Math.round(w*h/330);i++){let xx=x+((i*73.7)%w),yy=y+((i*39.3)%h),rad=1+(i%5);ctx.beginPath();ctx.arc(xx,yy,rad,0,Math.PI*2);ctx.fill()}}
+function barrier(o){let x=o.side==='left'?0:W-o.w;ctx.save();if(o.kind==='hedge'){hedge(x,o.y,o.w,o.h)}else{ctx.fillStyle='#c60d0c';ctx.fillRect(x,o.y,o.w,o.h);ctx.beginPath();ctx.rect(x,o.y,o.w,o.h);ctx.clip();ctx.fillStyle='#fafafa';let spacing=o.h*1.9;for(let i=-2;i<Math.ceil(o.w/spacing)+2;i++){let z=x+i*spacing;ctx.beginPath();ctx.moveTo(z+o.h*.42,o.y);ctx.lineTo(z+o.h*1.15,o.y);ctx.lineTo(z+o.h*.52,o.y+o.h);ctx.lineTo(z-o.h*.22,o.y+o.h);ctx.closePath();ctx.fill()}}ctx.restore()}
+function draw(){ctx.clearRect(0,0,W,H);bg();if(mode==='playing'||mode==='paused'||mode==='dead'){for(const o of obstacles)barrier(o);paintCar(ctx,player.x,player.y,player.w,player.h,carType,player.angle)}}
+function frame(t){let dt=Math.min((t-last)/1000,.04);last=t;if(mode==='playing')update(dt);draw();requestAnimationFrame(frame)}requestAnimationFrame(frame);
+for(const b of document.querySelectorAll('.car-choice'))b.addEventListener('click',()=>{carType=b.dataset.car;document.querySelectorAll('.car-choice').forEach(n=>n.classList.toggle('selected',n===b))});$('start').onclick=begin;$('pause').onclick=togglePause;$('back').onclick=showMenu;$('retry').onclick=()=>{if(mode==='paused'){togglePause()}else{begin()}};
+function setupHold(id,direction){let el=$(id);const down=e=>{e.preventDefault();el.setPointerCapture?.(e.pointerId);keys[direction]=true;el.classList.add('held')};const up=e=>{e.preventDefault();keys[direction]=false;el.classList.remove('held')};el.addEventListener('pointerdown',down);el.addEventListener('pointerup',up);el.addEventListener('pointercancel',up);el.addEventListener('lostpointercapture',up)}setupHold('left','left');setupHold('right','right');window.addEventListener('keydown',e=>{if(['ArrowLeft','a','A'].includes(e.key)){keys.left=true;e.preventDefault()}if(['ArrowRight','d','D'].includes(e.key)){keys.right=true;e.preventDefault()}if(e.key==='Escape'||e.key===' '){if(mode==='playing'||mode==='paused')togglePause();e.preventDefault()}});window.addEventListener('keyup',e=>{if(['ArrowLeft','a','A'].includes(e.key))keys.left=false;if(['ArrowRight','d','D'].includes(e.key))keys.right=false});document.addEventListener('visibilitychange',()=>{if(document.hidden&&mode==='playing')togglePause()});
+})();
+</script></body></html>
